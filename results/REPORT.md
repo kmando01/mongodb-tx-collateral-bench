@@ -125,6 +125,39 @@ cd go-bench && go run main.go
 cat results/collateral.json | python3 -m json.tool
 ```
 
+### P7 보충 — inactive transaction 관찰 명령
+
+`db.currentOp({"transaction":{$exists:true}})` 는 inactive transaction을 반환하지 않는다.  
+본 실험에서 `currentOp_tx = 0`으로 직접 확인 (snapshot_inactive_tx = 200인 상황에서).
+
+**올바른 관찰 명령:**
+
+```javascript
+// inactive transaction 포함 조회 (idleSessions: true 필수)
+db.aggregate([{
+  $currentOp: { idleSessions: true, allUsers: true, localOps: false }
+}, {
+  $match: { "transaction": { $exists: true } }
+}]).forEach(op => printjson({
+  lsid:            op.lsid.id,
+  timeOpenMicros:  op.transaction.timeOpenMicros,
+  timeActiveMicros: op.transaction.timeActiveMicros,
+  timeInactiveMicros: op.transaction.timeInactiveMicros,
+  inactiveRatio:   op.transaction.timeInactiveMicros / op.transaction.timeOpenMicros
+}))
+
+// 간단한 카운트
+db.adminCommand({ currentOp: 1, $all: true, "transaction": { $exists: true } })
+  .inprog.length
+
+// serverStatus로 집계 (관찰 비용 낮음)
+db.serverStatus().transactions  // currentOpen / currentInactive / currentActive
+```
+
+**원본 보고서 P2(timeInactiveMicros 99.6%) 재현 가능 경로:**
+1. `$currentOp {idleSessions: true}` 로 외부 API 대기 중 실시간 포착
+2. MongoDB profiler (system.profile) — timeout abort 시 slow log에 세 타이머 자동 기록
+
 ---
 
 ## 이 실험의 위치 — 원본 검증 보고서와의 관계
